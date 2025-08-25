@@ -6,6 +6,9 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
     if (@typeInfo(API) != .@"struct") {
         @compileError("API must be a struct");
     }
+    if (@typeInfo(API).@"struct".layout != .@"extern") {
+        @compileError("API must be an extern struct");
+    }
 
     return struct {
         const Self = @This();
