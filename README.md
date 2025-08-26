@@ -1,6 +1,8 @@
 # STDX
 
-My personal "Extend Standard" Zig library.
+My personal Standard "Extended" Zig Library.
+
+I take the liberty to break everything, you better just copy or fork the part you need.
 
 ## Install
 
@@ -21,6 +23,7 @@ pub fn build(b: *Build) !void {
       .target = target,
       .optimize = optimize,
   });
+
   // Your App
   const hello = b.addExecutable(.{
       .name = "hello",
@@ -30,6 +33,7 @@ pub fn build(b: *Build) !void {
   });
   hello.root_module.addImport("stdx", dep_stdx.module("stdx"));
   b.installArtifact(hello);
+
   const run = b.addRunArtifact(hello);
   b.step("run", "Run hello").dependOn(&run.step);
 }
