@@ -41,6 +41,7 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             const exe_dir = try std.fs.selfExeDirPathAlloc(allocator);
             defer allocator.free(exe_dir);
             const lib_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_dir, lib_relative_path });
+            defer allocator.free(lib_path);
             return Self.init(allocator, lib_path);
         }
 
