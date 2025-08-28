@@ -1,8 +1,8 @@
 .{
     .name = .stdx,
-    .version = "0.1.1",
+    .version = "0.2.0",
     .fingerprint = 0x5479474f2aecccd4,
-    .minimum_zig_version = "0.14.1",
+    .minimum_zig_version = "0.15.1",
     .dependencies = .{},
     .paths = .{
         "build.zig",

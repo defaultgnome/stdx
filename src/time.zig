@@ -19,13 +19,11 @@ pub const CPUClock = struct {
                 lower = asm volatile ("rdtsc"
                     : [lower] "={eax}" (-> u32),
                     :
-                    : "edx", "eax"
-                );
+                    : .{ .edx = true, .eax = true });
                 higher = asm volatile ("movl %%edx, %[higher]"
                     : [higher] "=r" (-> u32),
                     :
-                    : "edx"
-                );
+                    : .{ .edx = true });
                 return CPUClock{ .clock_cycles = (@as(u64, higher) << 32) | (@as(u64, lower)) };
             },
 
@@ -38,8 +36,7 @@ pub const CPUClock = struct {
                     .clock_cycles = asm volatile ("rdcycle a0"
                         : [a0] "={a0}" (-> usize),
                         :
-                        : "a0"
-                    ),
+                        : .{ .a0 = true }),
                 };
             },
 
@@ -55,13 +52,11 @@ pub const CPUClock = struct {
                 const lower = asm volatile ("mfspr 0, 0x10C"
                     : [lower] "={r0}" (-> u32),
                     :
-                    : "r0"
-                );
+                    : .{ .r0 = true });
                 const upper = asm volatile ("mfspr 3, 0x10D"
                     : [upper] "={r3}" (-> u32),
                     :
-                    : "r3"
-                );
+                    : .{ .r3 = true });
                 return CPUClock{ .clock_cycles = (@as(u64, upper) << 32) | (@as(u64, lower)) };
             },
 
@@ -78,8 +73,7 @@ pub const CPUClock = struct {
                     .clock_cycles = asm volatile ("mrs x0, cntpct_el0"
                         : [x0] "={x0}" (-> u64),
                         :
-                        : "x0"
-                    ),
+                        : .{ .x0 = true }),
                 };
             },
 
@@ -92,3 +86,14 @@ pub const CPUClock = struct {
         return self.clock_cycles - other.clock_cycles;
     }
 };
+
+test "CPUClock" {
+    const clock = CPUClock.cycles();
+    try std.testing.expect(clock.clock_cycles > 0);
+
+    const clock2 = CPUClock.cycles();
+    try std.testing.expect(clock2.clock_cycles > 0);
+
+    const diff = clock2.since(clock);
+    try std.testing.expect(diff > 0);
+}
