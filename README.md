@@ -31,11 +31,15 @@ pub fn build(b: *Build) !void {
   // Your App
   const hello = b.addExecutable(.{
       .name = "hello",
-      .target = target,
-      .optimize = optimize,
-      .root_source_file = b.path("src/hello.zig"),
+      .root_module = b.createModule(.{
+          .root_source_file = b.path("src/hello.zig"),
+          .target = target,
+          .optimize = optimize,
+          .imports = &.{
+              .{ .name = "stdx", .module = dep_stdx.module("stdx") },
+          },
+      }),
   });
-  hello.root_module.addImport("stdx", dep_stdx.module("stdx"));
   b.installArtifact(hello);
 
   const run = b.addRunArtifact(hello);
