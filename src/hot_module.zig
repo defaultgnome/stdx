@@ -1,4 +1,8 @@
 const std = @import("std");
+const DynLib = @import("./dyn_lib.zig").DynLib;
+
+const Dir = std.Io.Dir;
+const Io = std.Io;
 
 /// HotModule is a wrapper around a dynamic library that facilitates for hot reloading.
 /// Your module should export a single struct with the API you want to expose. Pass the struct type as a template parameter.
@@ -14,11 +18,12 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
         const Self = @This();
 
         allocator: std.mem.Allocator,
+        io: Io,
         lib_path_original: []const u8,
         lib_path_working_copy: ?[]const u8 = null,
-        /// 0 means no copy exists
-        timestamp_working_copy: i128 = 0,
-        lib: ?std.DynLib = null,
+        /// Zero means no copy exists.
+        timestamp_working_copy: Io.Timestamp = .zero,
+        lib: ?DynLib = null,
         api: ?*const API = null,
 
         //------------------------
@@ -27,9 +32,10 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
 
         /// lib_absolute_path should be an absolute path to the library
         /// the path will be duplicated and stored in the struct
-        pub fn init(allocator: std.mem.Allocator, lib_absolute_path: []const u8) !Self {
+        pub fn init(allocator: std.mem.Allocator, io: Io, lib_absolute_path: []const u8) !Self {
             const self = Self{
                 .allocator = allocator,
+                .io = io,
                 .lib_path_original = try allocator.dupe(u8, lib_absolute_path),
             };
             return self;
@@ -37,12 +43,12 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
 
         /// lib_relative_path should be relative to the executable directory
         /// the path will be duplicated and stored in the struct
-        pub fn initFromExecutableDir(allocator: std.mem.Allocator, lib_relative_path: []const u8) !Self {
-            const exe_dir = try std.fs.selfExeDirPathAlloc(allocator);
+        pub fn initFromExecutableDir(allocator: std.mem.Allocator, io: Io, lib_relative_path: []const u8) !Self {
+            const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
             defer allocator.free(exe_dir);
-            const lib_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_dir, lib_relative_path });
+            const lib_path = try Dir.path.join(allocator, &.{ exe_dir, lib_relative_path });
             defer allocator.free(lib_path);
-            return Self.init(allocator, lib_path);
+            return Self.init(allocator, io, lib_path);
         }
 
         pub fn deinit(self: *Self) void {
@@ -84,7 +90,7 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
         pub fn loadLib(self: *Self) !void {
             std.debug.assert(self.lib == null);
             const lib_to_load = self.lib_path_working_copy orelse self.lib_path_original;
-            var lib = try std.DynLib.open(lib_to_load);
+            var lib = try DynLib.open(lib_to_load);
 
             self.timestamp_working_copy = try self.getLibTimestamp();
 
@@ -98,7 +104,7 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             if (self.lib) |*lib| {
                 lib.close();
             }
-            self.timestamp_working_copy = 0;
+            self.timestamp_working_copy = .zero;
             self.lib = null;
             self.api = null;
         }
@@ -111,8 +117,8 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
         /// must delete the previous copy if exists before creating a new one
         pub fn createCopy(self: *Self) !void {
             std.debug.assert(!self.hasCopy());
-            const timestamp = std.time.timestamp();
-            const lib_basename = std.fs.path.basename(self.lib_path_original);
+            const timestamp = Io.Timestamp.now(self.io, .real).toNanoseconds();
+            const lib_basename = Dir.path.basename(self.lib_path_original);
             const tmp_basename = try std.fmt.allocPrint(
                 self.allocator,
                 "{d}_{s}",
@@ -121,16 +127,16 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             defer self.allocator.free(tmp_basename);
 
             var dir = try self.getLibDir();
-            defer dir.close();
-            try dir.copyFile(self.lib_path_original, dir, tmp_basename, .{});
-            const new_path = try dir.realpathAlloc(self.allocator, tmp_basename);
+            defer dir.close(self.io);
+            try dir.copyFile(lib_basename, dir, tmp_basename, self.io, .{});
+            const new_path = try dir.realPathFileAlloc(self.io, tmp_basename, self.allocator);
             self.lib_path_working_copy = new_path;
         }
 
         /// delete the copy of the library only if exists, else do nothing
         pub fn deleteCopy(self: *Self) !void {
             if (self.lib_path_working_copy) |path| {
-                try std.fs.deleteFileAbsolute(path);
+                try Dir.deleteFileAbsolute(self.io, path);
                 self.allocator.free(path);
                 self.lib_path_working_copy = null;
             }
@@ -139,7 +145,7 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
         /// check if the library file has changed since the last time it was loaded
         pub fn hasLibChanged(self: *Self) !bool {
             const lib_timestamp = try self.getLibTimestamp();
-            return lib_timestamp != self.timestamp_working_copy;
+            return lib_timestamp.nanoseconds != self.timestamp_working_copy.nanoseconds;
         }
 
         //-------------------
@@ -147,23 +153,23 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
         //-------------------
 
         /// get the directory where the library file is located
-        fn getLibDir(self: Self) !std.fs.Dir {
-            const maybe_lib_dir = std.fs.path.dirname(self.lib_path_original);
+        fn getLibDir(self: Self) !Dir {
+            const maybe_lib_dir = Dir.path.dirname(self.lib_path_original);
             const dir = dir: {
                 if (maybe_lib_dir) |dir_path| {
-                    break :dir try std.fs.cwd().openDir(dir_path, .{});
+                    break :dir try Dir.cwd().openDir(self.io, dir_path, .{});
                 } else {
-                    break :dir std.fs.cwd();
+                    break :dir Dir.cwd();
                 }
             };
             return dir;
         }
 
         /// get the last modification timestamp of the library file
-        fn getLibTimestamp(self: *Self) !i128 {
-            const file = try std.fs.openFileAbsolute(self.lib_path_original, .{});
-            defer file.close();
-            const file_stat = try file.stat();
+        fn getLibTimestamp(self: *Self) !Io.Timestamp {
+            const file = try Dir.openFileAbsolute(self.io, self.lib_path_original, .{});
+            defer file.close(self.io);
+            const file_stat = try file.stat(self.io);
             return file_stat.mtime;
         }
     };
@@ -175,13 +181,14 @@ test "HotModule - High Level API" {
         return error.SkipZigTest;
     }
     const API = extern struct {
-        foo: *const fn () callconv(.C) void,
+        foo: *const fn () callconv(.c) void,
     };
     const APIHotModule = HotModule(API, "api");
     const test_lib_path = "test.so";
 
     var hot_module = try APIHotModule.initFromExecutableDir(
         std.testing.allocator,
+        std.testing.io,
         test_lib_path,
     );
 
@@ -202,17 +209,19 @@ test "HotModule - Low Level API" {
         return error.SkipZigTest;
     }
     const API = extern struct {
-        foo: *const fn () callconv(.C) void,
+        foo: *const fn () callconv(.c) void,
     };
     const APIHotModule = HotModule(API, "api");
-    const test_lib_path = try std.fs.cwd().realpathAlloc(
-        std.testing.allocator,
+    const test_lib_path = try Dir.cwd().realPathFileAlloc(
+        std.testing.io,
         "mylib.dll",
+        std.testing.allocator,
     );
     defer std.testing.allocator.free(test_lib_path);
 
     var hot_module = try APIHotModule.init(
         std.testing.allocator,
+        std.testing.io,
         test_lib_path,
     );
     try hot_module.createCopy();

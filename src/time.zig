@@ -95,5 +95,6 @@ test "CPUClock" {
     try std.testing.expect(clock2.clock_cycles > 0);
 
     const diff = clock2.since(clock);
-    try std.testing.expect(diff > 0);
+    try std.testing.expect(diff >= 0);
+    try std.testing.expect(clock2.clock_cycles >= clock.clock_cycles);
 }

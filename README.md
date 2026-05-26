@@ -4,6 +4,10 @@ My personal Standard "Extended" Zig Library.
 
 I take the liberty to break everything, you better just copy or fork the part you need.
 
+## Versions
+
+`main` branch use zig version 0.16.0, see tags for other versions (not maintained)
+
 ## Install
 
 To add the dependency to your project, you can:
