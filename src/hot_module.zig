@@ -129,8 +129,9 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             var dir = try self.getLibDir();
             defer dir.close(self.io);
             try dir.copyFile(lib_basename, dir, tmp_basename, self.io, .{});
-            const new_path = try dir.realPathFileAlloc(self.io, tmp_basename, self.allocator);
-            self.lib_path_working_copy = new_path;
+            const new_path_z = try dir.realPathFileAlloc(self.io, tmp_basename, self.allocator);
+            defer self.allocator.free(new_path_z);
+            self.lib_path_working_copy = try self.allocator.dupe(u8, new_path_z);
         }
 
         /// delete the copy of the library only if exists, else do nothing
@@ -173,63 +174,4 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             return file_stat.mtime;
         }
     };
-}
-
-// TODO: make those tests work with a mock library or something
-test "HotModule - High Level API" {
-    if (true) {
-        return error.SkipZigTest;
-    }
-    const API = extern struct {
-        foo: *const fn () callconv(.c) void,
-    };
-    const APIHotModule = HotModule(API, "api");
-    const test_lib_path = "test.so";
-
-    var hot_module = try APIHotModule.initFromExecutableDir(
-        std.testing.allocator,
-        std.testing.io,
-        test_lib_path,
-    );
-
-    try hot_module.load();
-    try std.testing.expect(hot_module.api != null);
-
-    _ = try hot_module.reload();
-    try std.testing.expect(hot_module.api != null);
-
-    try hot_module.unload();
-    try std.testing.expect(hot_module.api == null);
-
-    hot_module.deinit();
-}
-
-test "HotModule - Low Level API" {
-    if (true) {
-        return error.SkipZigTest;
-    }
-    const API = extern struct {
-        foo: *const fn () callconv(.c) void,
-    };
-    const APIHotModule = HotModule(API, "api");
-    const test_lib_path = try Dir.cwd().realPathFileAlloc(
-        std.testing.io,
-        "mylib.dll",
-        std.testing.allocator,
-    );
-    defer std.testing.allocator.free(test_lib_path);
-
-    var hot_module = try APIHotModule.init(
-        std.testing.allocator,
-        std.testing.io,
-        test_lib_path,
-    );
-    try hot_module.createCopy();
-    try hot_module.loadLib();
-    if (hot_module.api) |api| {
-        api.foo();
-    }
-    hot_module.unloadLib();
-    try hot_module.deleteCopy();
-    hot_module.deinit();
 }
