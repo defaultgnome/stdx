@@ -135,6 +135,7 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
         }
 
         /// delete the copy of the library only if exists, else do nothing
+        /// if called before unloading on windows, it will fail
         pub fn deleteCopy(self: *Self) !void {
             if (self.lib_path_working_copy) |path| {
                 try Dir.deleteFileAbsolute(self.io, path);

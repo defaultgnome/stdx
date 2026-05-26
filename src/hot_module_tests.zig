@@ -24,7 +24,7 @@ fn pluginLibPathAlloc(allocator: std.mem.Allocator, io: Io) ![]const u8 {
 }
 
 fn bumpLibMtime(io: Io, lib_absolute_path: []const u8) !void {
-    var file = try Dir.openFileAbsolute(io, lib_absolute_path, .{});
+    var file = try Dir.openFileAbsolute(io, lib_absolute_path, .{ .mode = .read_write });
     defer file.close(io);
     try file.setTimestampsNow(io);
 }
@@ -79,8 +79,8 @@ test "createCopy loadLib deleteCopy" {
     try testing.expect(hot_module.hasCopy());
 
     try hot_module.loadLib();
-    defer hot_module.unloadLib();
     try testing.expect(hot_module.api != null);
+    hot_module.unloadLib();
 
     try hot_module.deleteCopy();
     try testing.expect(!hot_module.hasCopy());
