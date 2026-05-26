@@ -12,8 +12,8 @@ I take the liberty to break everything, you better just copy or fork the part yo
 
 To add the dependency to your project, you can:
 
-1. Add with `zig fetch --save https://github.com/defaultgnome/stdx.git`
-2. Add with `zig fetch --save https://github.com/defaultgnome/stdx/archive/refs/tags/<REPLACE ME>.tar.gz`
+1. Add with `zig fetch --save git+https://github.com/defaultgnome/stdx.git`
+2. Add with `zig fetch --save git+https://github.com/defaultgnome/stdx/archive/refs/tags/<REPLACE ME>.tar.gz`
 
 ```zig
 const std = @import("std");
