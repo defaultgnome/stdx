@@ -1,11 +1,23 @@
+//! Hot-reload dynamic library host.
+//!
+//! Copies the built `.so`/`.dylib`/`.dll` to a unique sibling filename, loads the copy,
+//! and watches the **original** path mtime — rebuild can overwrite the original while
+//! the host still holds the copy open.
+//!
+//! Contract:
+//! - Shared `extern struct` of `callconv(.c)` fn pointers (same layout in exe + plugin).
+//! - Plugin exports one symbol, e.g. `export const api = API{ ... };`.
+//! - `HotModule(API, "api")` — second arg must match export name.
+//! - All I/O via `std.Io` (Zig 0.16+).
+//!
+//! Build: dynamic library + `addOptionPath("plugin_lib_path", plugin.getEmittedBin())` for dev;
+//! ship with `initFromExecutableDir` + relative filename beside the exe.
 const std = @import("std");
 const DynLib = @import("./dyn_lib.zig").DynLib;
 
 const Dir = std.Io.Dir;
 const Io = std.Io;
 
-/// HotModule is a wrapper around a dynamic library that facilitates for hot reloading.
-/// Your module should export a single struct with the API you want to expose. Pass the struct type as a template parameter.
 pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
     if (@typeInfo(API) != .@"struct") {
         @compileError("API must be a struct");
@@ -21,17 +33,13 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
         io: Io,
         lib_path_original: []const u8,
         lib_path_working_copy: ?[]const u8 = null,
-        /// Zero means no copy exists.
+        /// Last loaded mtime of `lib_path_original`; `.zero` = no copy loaded.
         timestamp_working_copy: Io.Timestamp = .zero,
         lib: ?DynLib = null,
         api: ?*const API = null,
 
-        //------------------------
-        //-----HIGH LEVEL API-----
-        //------------------------
-
-        /// lib_absolute_path should be an absolute path to the library
-        /// the path will be duplicated and stored in the struct
+        // ==== HIGH LEVEL API ====
+        /// Dev path — typically `@import("build_options").plugin_lib_path`.
         pub fn init(allocator: std.mem.Allocator, io: Io, lib_absolute_path: []const u8) !Self {
             const self = Self{
                 .allocator = allocator,
@@ -41,8 +49,7 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             return self;
         }
 
-        /// lib_relative_path should be relative to the executable directory
-        /// the path will be duplicated and stored in the struct
+        /// Shipped layout — `lib_relative_path` relative to exe dir (e.g. `"libmy_plugin.dylib"`).
         pub fn initFromExecutableDir(allocator: std.mem.Allocator, io: Io, lib_relative_path: []const u8) !Self {
             const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
             defer allocator.free(exe_dir);
@@ -58,20 +65,17 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             }
         }
 
-        /// create a copy of the library and load it
         pub fn load(self: *Self) !void {
             try self.createCopy();
             try self.loadLib();
         }
 
-        /// unload the library and delete the copy
         pub fn unload(self: *Self) !void {
             self.unloadLib();
             try self.deleteCopy();
         }
 
-        /// unload the library and load it again only if the library has changed
-        /// return true if the library was reloaded
+        /// Reload only when **original** file mtime changed; returns whether reload ran.
         pub fn reload(self: *Self) !bool {
             if (!try self.hasLibChanged()) return false;
 
@@ -80,13 +84,8 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             return true;
         }
 
-        //------------------------
-        //-----LOW LEVEL API-----
-        //------------------------
-
-        /// load the library from the working copy if exists, else from the original path
-        /// lookup for symbol_name in the library
-        /// assert that the library is not already loaded
+        // ==== LOW LEVEL API ====
+        /// Open working copy (or original); resolve `symbol_name`. Asserts not already loaded.
         pub fn loadLib(self: *Self) !void {
             std.debug.assert(self.lib == null);
             const lib_to_load = self.lib_path_working_copy orelse self.lib_path_original;
@@ -113,8 +112,7 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             return self.lib_path_working_copy != null;
         }
 
-        /// Can't be called twice in a row,
-        /// must delete the previous copy if exists before creating a new one
+        /// Unique `{timestamp}_{basename}` in same dir as original. One copy at a time.
         pub fn createCopy(self: *Self) !void {
             std.debug.assert(!self.hasCopy());
             const timestamp = Io.Timestamp.now(self.io, .real).toNanoseconds();
@@ -134,8 +132,7 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             self.lib_path_working_copy = try self.allocator.dupe(u8, new_path_z);
         }
 
-        /// delete the copy of the library only if exists, else do nothing
-        /// if called before unloading on windows, it will fail
+        /// No-op if no copy. On Windows: must unload first else delete fails (file still mapped).
         pub fn deleteCopy(self: *Self) !void {
             if (self.lib_path_working_copy) |path| {
                 try Dir.deleteFileAbsolute(self.io, path);
@@ -144,17 +141,14 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             }
         }
 
-        /// check if the library file has changed since the last time it was loaded
+        /// Compare `lib_path_original` mtime to last `loadLib` snapshot.
+        /// TODO: maybe sample multiple times and wait for stability?
         pub fn hasLibChanged(self: *Self) !bool {
             const lib_timestamp = try self.getLibTimestamp();
             return lib_timestamp.nanoseconds != self.timestamp_working_copy.nanoseconds;
         }
 
-        //-------------------
-        //-----INTERNAL------
-        //-------------------
-
-        /// get the directory where the library file is located
+        // ==== INTERNAL ====
         fn getLibDir(self: Self) !Dir {
             const maybe_lib_dir = Dir.path.dirname(self.lib_path_original);
             const dir = dir: {
@@ -167,7 +161,6 @@ pub fn HotModule(comptime API: type, comptime symbol_name: [:0]const u8) type {
             return dir;
         }
 
-        /// get the last modification timestamp of the library file
         fn getLibTimestamp(self: *Self) !Io.Timestamp {
             const file = try Dir.openFileAbsolute(self.io, self.lib_path_original, .{});
             defer file.close(self.io);
