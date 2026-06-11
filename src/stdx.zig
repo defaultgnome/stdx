@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 
+pub const RingBuffer = @import("ring_buffer.zig").RingBuffer;
+
 pub const DynLib = @import("dyn_lib.zig").DynLib;
 pub const HotModule = @import("hot_module.zig").HotModule;
 
