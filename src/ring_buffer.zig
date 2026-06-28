@@ -57,9 +57,11 @@ pub fn RingBuffer(comptime T: type) type {
             return item;
         }
 
-        pub fn remove(self: *Self) RingBufferError!void {
+        pub fn remove(self: *Self) RingBufferError!T {
             if (self.isEmpty()) return error.RingBufferEmpty;
+            const item = self.items[self.head];
             self.head = self.getHead(1);
+            return item;
         }
 
         /// get the item at a given zero-based index
@@ -133,7 +135,8 @@ test "ring buffer" {
     try expect(err == error.RingBufferFull);
 
     // remove
-    try rb.remove(); // remove id 1
+    const removed = try rb.remove(); // remove id 1
+    try expect(removed.id == 1);
     try expect(!rb.isFull());
     try expect(rb.length() == 9);
     {
@@ -141,8 +144,8 @@ test "ring buffer" {
         try expect(item.id == 2);
     }
     // remove two more, and add two more, so we wrap around
-    try rb.remove(); // remove id 2
-    try rb.remove(); // remove id 3
+    _ = try rb.remove(); // remove id 2
+    _ = try rb.remove(); // remove id 3
     try expect(rb.length() == 7);
     try rb.push(Entity{ .id = 11 });
     try rb.push(Entity{ .id = 12 });
